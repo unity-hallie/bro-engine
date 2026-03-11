@@ -13,6 +13,5 @@ Core abstractions:
 """
 
 from .edge import Edge, EdgeKind
-from .graph_store import GraphStore
 
-__all__ = ["Edge", "EdgeKind", "GraphStore"]
+__all__ = ["Edge", "EdgeKind"]

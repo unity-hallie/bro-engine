@@ -120,7 +120,7 @@ class Edge:
         """
         Geometric similarity to another edge.
 
-        Returns cosine similarity if both edges have vectors, 0.0 otherwise.
+        Returns cosine similarity in [-1, 1] if both edges have vectors, 0.0 otherwise.
         Used for context-sensitive retrieval and wave interference.
         """
         if self.vector is None or other.vector is None:
@@ -132,7 +132,9 @@ class Edge:
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
 
-        return float(np.dot(self.vector, other.vector) / (norm_a * norm_b))
+        # Clamp to [-1, 1] to handle float precision
+        result = float(np.dot(self.vector, other.vector) / (norm_a * norm_b))
+        return max(-1.0, min(1.0, result))
 
     def resonates_with_field(self, field_vector: npt.NDArray[np.float32]) -> float:
         """
@@ -156,7 +158,9 @@ class Edge:
         if norm_edge == 0.0 or norm_field == 0.0:
             return 0.0
 
-        return float(np.dot(self.vector, field_vector) / (norm_edge * norm_field))
+        # Clamp to [-1, 1] to handle float precision
+        result = float(np.dot(self.vector, field_vector) / (norm_edge * norm_field))
+        return max(-1.0, min(1.0, result))
 
     def __repr__(self) -> str:
         """Human-readable representation."""

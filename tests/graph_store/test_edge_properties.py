@@ -10,6 +10,10 @@ import numpy as np
 from hypothesis import given, strategies as st
 from bro_engine.graph_store.edge import Edge, EdgeKind
 
+# Test dimensions: small for property tests, production size for spot checks
+TEST_DIMS = 8
+PROD_DIMS = 512
+
 
 # Hypothesis strategies for generating test data
 @st.composite
@@ -41,16 +45,18 @@ def valid_edge(draw):
 
 
 @st.composite
-def edge_with_vector(draw):
-    """Generate an edge with a geometric vector."""
+def edge_with_vector(draw, dims=TEST_DIMS):
+    """Generate an edge with a non-zero geometric vector."""
     edge = draw(valid_edge())
-    # Random unit vector in 512 dimensions
-    vec = draw(st.lists(st.floats(min_value=-1, max_value=1), min_size=512, max_size=512))
+    vec = draw(st.lists(
+        st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False),
+        min_size=dims, max_size=dims
+    ))
     vec = np.array(vec, dtype=np.float32)
-    # Normalize
-    norm = np.linalg.norm(vec)
-    if norm > 0:
-        vec = vec / norm
+    # If all zeros, set first element to 1
+    if np.linalg.norm(vec) == 0:
+        vec[0] = 1.0
+    vec = vec / np.linalg.norm(vec)
     edge.vector = vec
     return edge
 
@@ -133,10 +139,8 @@ class TestGeometricOperations:
     @given(edge_with_vector())
     def test_field_resonance_bounds(self, edge: Edge):
         """Field resonance is in [-1, 1]."""
-        # Random field vector
-        field = np.random.randn(512).astype(np.float32)
-        field = field / np.linalg.norm(field)  # Normalize
-
+        field = np.random.randn(TEST_DIMS).astype(np.float32)
+        field = field / np.linalg.norm(field)
         resonance = edge.resonates_with_field(field)
         assert -1.0 <= resonance <= 1.0
 
@@ -146,6 +150,25 @@ class TestGeometricOperations:
         if edge.vector is not None:
             resonance = edge.resonates_with_field(edge.vector)
             assert np.isclose(resonance, 1.0, atol=1e-6)
+
+    def test_production_scale_vectors(self):
+        """Spot check: geometric ops work at production dimensions (512)."""
+        vec1 = np.random.randn(PROD_DIMS).astype(np.float32)
+        vec1 = vec1 / np.linalg.norm(vec1)
+        vec2 = np.random.randn(PROD_DIMS).astype(np.float32)
+        vec2 = vec2 / np.linalg.norm(vec2)
+
+        edge1 = Edge("a", "r", "b", 0.5, vector=vec1)
+        edge2 = Edge("c", "r", "d", 0.5, vector=vec2)
+
+        # Properties hold at production scale
+        assert -1.0 <= edge1.cosine_similarity(edge2) <= 1.0
+        assert np.isclose(edge1.cosine_similarity(edge1), 1.0, atol=1e-6)
+        assert np.isclose(
+            edge1.cosine_similarity(edge2),
+            edge2.cosine_similarity(edge1),
+            atol=1e-6
+        )
 
 
 class TestEdgeRepresentation:
