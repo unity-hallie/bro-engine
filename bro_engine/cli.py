@@ -562,6 +562,56 @@ def moments(limit: int):
     store.close()
 
 
+@cli.command('install-skills')
+@click.option('--force', is_flag=True, help='Overwrite existing skill symlinks')
+def install_skills(force: bool):
+    """
+    Install bro school skills globally for all Claude sessions.
+
+    Symlinks .claude/skills/* into ~/.claude/skills/ so skills are
+    available in any project, not just bro-engine.
+
+    Example: edge install-skills
+    """
+    skills_src = Path(__file__).parent.parent / '.claude' / 'skills'
+    skills_dst = Path.home() / '.claude' / 'skills'
+
+    if not skills_src.exists():
+        click.echo(f"Skills source not found: {skills_src}")
+        return
+
+    skills_dst.mkdir(parents=True, exist_ok=True)
+
+    installed = []
+    skipped = []
+
+    for skill_dir in sorted(skills_src.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+
+        dst = skills_dst / skill_dir.name
+
+        if dst.exists() or dst.is_symlink():
+            if force:
+                dst.unlink() if dst.is_symlink() else dst.rmdir()
+            else:
+                skipped.append(skill_dir.name)
+                continue
+
+        dst.symlink_to(skill_dir.resolve())
+        installed.append(skill_dir.name)
+
+    for name in installed:
+        click.echo(f"  ✓ {name} → ~/.claude/skills/{name}")
+    for name in skipped:
+        click.echo(f"  ~ {name} (already exists, use --force to overwrite)")
+
+    if installed:
+        click.echo(f"\n{len(installed)} skill(s) installed. Restart Claude Code to pick them up.")
+    else:
+        click.echo("\nNo new skills installed.")
+
+
 def main():
     cli()
 
