@@ -547,8 +547,13 @@ def moments(limit: int):
     # Sort by the timestamp target
     def parse_ts(e):
         try:
-            return datetime.fromisoformat(e.target)
-        except ValueError:
+            ts = e.target.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(ts)
+            # Normalize to offset-naive UTC for sorting
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            return dt
+        except (ValueError, AttributeError):
             return datetime.min
 
     moment_edges.sort(key=parse_ts)
