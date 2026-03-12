@@ -15,59 +15,65 @@ from .graph_store import Edge, GraphStore
 
 def begin_session(
     store: GraphStore,
-    truth_1: str,
-    truth_2: str,
-    truth_3: str,
+    truths: list[tuple[str, str, str]],
     session_name: Optional[str] = None,
+    confidence: float = 0.85,
 ) -> dict:
     """
-    Begin a session with three true things.
+    Begin a session with three true edges.
 
     Args:
         store: GraphStore connection
-        truth_1, truth_2, truth_3: Three truths to orient the session
+        truths: List of (source, relationship, target) tuples - the three truths
         session_name: Optional name (defaults to timestamp)
+        confidence: Confidence for the truth edges (default 0.85)
 
     Returns:
-        Dict with session_id, truths, and resonant edges
+        Dict with session_id, truth_edges, and resonant edges
     """
+    if len(truths) != 3:
+        raise ValueError("Exactly three truths required for session start")
+
     # Create session token
     session_id = session_name or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Store session start as an event
-    session_edge_id = store.add_edge(Edge(
+    store.add_edge(Edge(
         source=session_id,
         relationship="began_at",
         target=datetime.now().isoformat(),
-        confidence=1.0,
+        confidence=0.95,
         via=session_id,
         kind="founding_edge",
     ))
 
-    # Store the three truths
-    truths = [truth_1, truth_2, truth_3]
-    truth_ids = []
+    # Store the three truths as proper edges
+    truth_edges = []
+    concepts = []
 
-    for i, truth in enumerate(truths, 1):
-        edge_id = store.add_edge(Edge(
-            source=session_id,
-            relationship=f"truth_{i}",
-            target=truth,
-            confidence=0.95,
+    for source, relationship, target in truths:
+        edge = Edge(
+            source=source,
+            relationship=relationship,
+            target=target,
+            confidence=confidence,
             via=session_id,
-            kind="founding_edge",
-        ))
-        truth_ids.append(edge_id)
+        )
+        edge_id = store.add_edge(edge)
+        truth_edges.append(edge)
 
-    # Extract concepts from truths for resonance matching
-    concepts = extract_concepts(truths)
+        # Collect concepts from all parts
+        concepts.extend([source, relationship, target])
+
+    # Dedupe concepts
+    concepts = list(dict.fromkeys(concepts))
 
     # Find resonant edges
     resonant = find_resonant_edges(store, concepts, session_id)
 
     return {
         "session_id": session_id,
-        "truths": truths,
+        "truth_edges": truth_edges,
         "concepts": concepts,
         "resonant_edges": resonant,
     }
@@ -156,37 +162,41 @@ def find_resonant_edges(
 def continue_session(
     store: GraphStore,
     session_id: str,
-    new_truth: str,
+    truth: tuple[str, str, str],
+    confidence: float = 0.8,
 ) -> dict:
     """
-    Add a new truth to an ongoing session.
+    Add a new truth edge to an ongoing session.
 
     As truths accumulate, more edges resonate.
     """
-    # Get existing truths
-    existing = store.query_edges(source=session_id, limit=10)
-    truth_count = sum(1 for e in existing if e.relationship.startswith("truth_"))
+    source, relationship, target = truth
 
-    # Add new truth
-    edge_id = store.add_edge(Edge(
-        source=session_id,
-        relationship=f"truth_{truth_count + 1}",
-        target=new_truth,
-        confidence=0.9,  # Slightly lower than opening truths
+    # Add new truth as proper edge
+    edge = Edge(
+        source=source,
+        relationship=relationship,
+        target=target,
+        confidence=confidence,
         via=session_id,
-    ))
+    )
+    store.add_edge(edge)
 
-    # Extract concepts from all truths now
-    all_truths = [e.target for e in existing if e.relationship.startswith("truth_")]
-    all_truths.append(new_truth)
+    # Get all edges from this session for resonance
+    session_edges = store.query_edges(via=session_id, limit=50)
 
-    concepts = extract_concepts(all_truths)
+    # Collect concepts from all session edges
+    concepts = []
+    for e in session_edges:
+        concepts.extend([e.source, e.relationship, e.target])
+    concepts = list(dict.fromkeys(concepts))
+
     resonant = find_resonant_edges(store, concepts, session_id)
 
     return {
         "session_id": session_id,
-        "new_truth": new_truth,
-        "total_truths": truth_count + 1,
+        "new_truth": edge,
+        "total_truths": len([e for e in session_edges if e.relationship not in ("began_at", "ended_at", "summary")]),
         "concepts": concepts,
         "resonant_edges": resonant,
     }

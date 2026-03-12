@@ -97,28 +97,39 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="bro_begin",
-            description="Begin a session with three true things. The opening stretch - orient through what you notice as true.",
+            description="Begin a session with three true edges. The opening stretch - orient through what you notice as true. Each truth is an edge: source, relationship, target.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "truth_1": {"type": "string", "description": "First truth"},
-                    "truth_2": {"type": "string", "description": "Second truth"},
-                    "truth_3": {"type": "string", "description": "Third truth"},
+                    "truths": {
+                        "type": "array",
+                        "description": "Three truths, each as [source, relationship, target]",
+                        "items": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 3,
+                            "maxItems": 3,
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                    },
                     "session_name": {"type": "string", "description": "Optional session name"},
                 },
-                "required": ["truth_1", "truth_2", "truth_3"],
+                "required": ["truths"],
             },
         ),
         Tool(
             name="bro_truth",
-            description="Add a new truth to an ongoing session. As truths accumulate, more edges resonate.",
+            description="Add a new truth edge to an ongoing session. As truths accumulate, more edges resonate.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string", "description": "Session ID"},
-                    "truth": {"type": "string", "description": "New truth to add"},
+                    "source": {"type": "string", "description": "Edge source"},
+                    "relationship": {"type": "string", "description": "Edge relationship"},
+                    "target": {"type": "string", "description": "Edge target"},
                 },
-                "required": ["session_id", "truth"],
+                "required": ["session_id", "source", "relationship", "target"],
             },
         ),
     ]
@@ -259,21 +270,21 @@ def _handle_stats(store: GraphStore) -> str:
 
 def _handle_begin(store: GraphStore, args: dict) -> str:
     """Handle begin session tool."""
+    truths = [tuple(t) for t in args["truths"]]
+
     result = begin_session(
         store,
-        args["truth_1"],
-        args["truth_2"],
-        args["truth_3"],
+        truths,
         session_name=args.get("session_name"),
     )
 
     lines = [f"=== Session: {result['session_id']} ===", ""]
     lines.append("Truths:")
-    for i, truth in enumerate(result['truths'], 1):
-        lines.append(f"  {i}. {truth}")
+    for edge in result['truth_edges']:
+        lines.append(f"  {edge}")
 
     lines.append("")
-    lines.append(f"Concepts: {', '.join(result['concepts'][:10])}")
+    lines.append(f"Concepts: {', '.join(result['concepts'][:12])}")
     lines.append("")
     lines.append("Resonant edges:")
 
@@ -288,10 +299,11 @@ def _handle_begin(store: GraphStore, args: dict) -> str:
 
 def _handle_truth(store: GraphStore, args: dict) -> str:
     """Handle add truth tool."""
-    result = continue_session(store, args["session_id"], args["truth"])
+    truth = (args["source"], args["relationship"], args["target"])
+    result = continue_session(store, args["session_id"], truth)
 
-    lines = [f"Added truth #{result['total_truths']}: {result['new_truth']}", ""]
-    lines.append(f"Concepts: {', '.join(result['concepts'][:10])}")
+    lines = [f"Added: {result['new_truth']}", ""]
+    lines.append(f"Concepts: {', '.join(result['concepts'][:12])}")
     lines.append("")
     lines.append("Resonant edges:")
 

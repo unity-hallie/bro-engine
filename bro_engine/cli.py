@@ -286,30 +286,39 @@ def init(apply: bool):
 
 
 @cli.command()
-@click.argument('truth_1')
-@click.argument('truth_2')
-@click.argument('truth_3')
+@click.option('--truth', '-t', nargs=3, multiple=True, required=True,
+              help='A truth as three parts: source relationship target')
 @click.option('--name', '-n', default=None, help='Session name')
-def begin(truth_1: str, truth_2: str, truth_3: str, name: Optional[str]):
+@click.option('--confidence', '-c', default=0.85, help='Confidence for truths')
+def begin(truth: tuple, name: Optional[str], confidence: float):
     """
-    Begin a session with three true things.
+    Begin a session with three true edges.
 
     The opening stretch. Orient through what you notice as true.
 
-    Example: bro-engine begin "the graph is alive" "I am curious" "spring is coming"
+    Example:
+        bro-engine begin \\
+          -t this_session discovered events_are_edges \\
+          -t thinking_layer wants_to flow \\
+          -t I feel curious
     """
+    if len(truth) != 3:
+        click.echo("Error: Exactly three truths required (-t source rel target)")
+        return
+
     store = get_store()
 
-    result = begin_session(store, truth_1, truth_2, truth_3, session_name=name)
+    truths = [(t[0], t[1], t[2]) for t in truth]
+    result = begin_session(store, truths, session_name=name, confidence=confidence)
 
     click.echo(f"=== Session: {result['session_id']} ===")
     click.echo()
     click.echo("Truths:")
-    for i, truth in enumerate(result['truths'], 1):
-        click.echo(f"  {i}. {truth}")
+    for edge in result['truth_edges']:
+        click.echo(f"  {edge}")
 
     click.echo()
-    click.echo(f"Concepts extracted: {', '.join(result['concepts'][:10])}")
+    click.echo(f"Concepts: {', '.join(result['concepts'][:12])}")
 
     click.echo()
     click.echo("=== Resonant Edges ===")
@@ -324,22 +333,25 @@ def begin(truth_1: str, truth_2: str, truth_3: str, name: Optional[str]):
 
 @cli.command('truth')
 @click.argument('session_id')
-@click.argument('new_truth')
-def add_truth(session_id: str, new_truth: str):
+@click.argument('source')
+@click.argument('relationship')
+@click.argument('target')
+@click.option('--confidence', '-c', default=0.8, help='Confidence')
+def add_truth(session_id: str, source: str, relationship: str, target: str, confidence: float):
     """
-    Add a truth to an ongoing session.
+    Add a truth edge to an ongoing session.
 
     As truths accumulate, more edges resonate.
 
-    Example: bro-engine truth session_20260311_220000 "the thinking layer wants to flow"
+    Example: bro-engine truth session_20260311 thinking_layer wants_to flow
     """
     store = get_store()
 
-    result = continue_session(store, session_id, new_truth)
+    result = continue_session(store, session_id, (source, relationship, target), confidence)
 
-    click.echo(f"Added truth #{result['total_truths']}: {new_truth}")
+    click.echo(f"Added: {result['new_truth']}")
     click.echo()
-    click.echo(f"Concepts: {', '.join(result['concepts'][:10])}")
+    click.echo(f"Concepts: {', '.join(result['concepts'][:12])}")
     click.echo()
     click.echo("=== Resonant Edges ===")
     for edge in result['resonant_edges'][:10]:
