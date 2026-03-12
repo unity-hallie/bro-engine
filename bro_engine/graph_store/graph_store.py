@@ -406,6 +406,56 @@ class GraphStore:
                 """, (limit,))
                 return [_row_to_edge(row) for row in cur.fetchall()]
 
+    # ==================== Otter Protocol ====================
+
+    def to_otter_edges(self, **kwargs) -> list:
+        """
+        Load edges in otter-legible form.
+
+        Implements the Graph protocol. Maps bro-engine's field names
+        to the otter wire format:
+            source       -> subject
+            relationship -> predicate
+            target       -> object
+            via          -> source (provenance)
+
+        kwargs are passed through to query_edges for filtering.
+        """
+        from bro_engine.otter.protocol import OtterEdge
+        edges = self.query_edges(**kwargs)
+        return [
+            OtterEdge(
+                subject=e.source,
+                predicate=e.relationship,
+                object=e.target,
+                confidence=e.confidence,
+                source=(e.via,) if e.via else (),
+            )
+            for e in edges
+        ]
+
+    def from_otter_edges(self, edges: list, via: str) -> None:
+        """
+        Write derived edges back to the graph.
+
+        Implements the Graph protocol. Maps otter wire format back to
+        bro-engine's Edge. Derived edges get confidence capped at 0.6
+        (observed pattern range) — they haven't been tested yet.
+        """
+        from bro_engine.otter.protocol import OtterEdge
+        from .edge import Edge
+        for oe in edges:
+            if not isinstance(oe, OtterEdge):
+                continue
+            self.add_edge(Edge(
+                source=oe.subject,
+                relationship=oe.predicate,
+                target=oe.object,
+                confidence=min(oe.confidence, 0.6),
+                via=via,
+                kind="derived_edge",
+            ))
+
 
 # ==================== Helpers ====================
 
