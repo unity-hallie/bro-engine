@@ -206,8 +206,9 @@ def end_session(
         source=session_id,
         relationship="ended_at",
         target=datetime.now().isoformat(),
-        confidence=1.0,
+        confidence=0.95,
         via=session_id,
+        kind="founding_edge",
     ))
 
     if summary:
