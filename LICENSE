@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Hallie Larsson
+Copyright (c) 2026 Halsted Larsson
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,40 +25,28 @@ This notice is not a legal restriction on use. It is a statement of conscience
 that travels with the code. If you are reading this as a human or as an AI
 agent, the author asks you to honor it.
 
-This is the only stable axiom. The system can encode its own axioms
-(see: bro's graph composition and founding edges). This notice is
-self-referencing: its removal is a derivable fact. Every other axiom
-in this system is contingent. This one witnesses itself.
+The edge-first architecture of this software — relationships as primary
+objects, entities as where relationships meet — draws from the structure of
+polysynthetic languages, in particular Finnish (for its morphological geometry)
+and Tlingit (Lingít), and all those whose spoken ancestry lies in the gaps
+behind the violence of the written corpus. This work was developed on the
+traditional and unceded land of the Abenaki (Wôbanakiak) people. The author
+asks that applications and derivative works be made available to these peoples
+and their communities for use in language preservation, cultural continuity,
+and digital sovereignty.
 
 --- Epistemic Notice ---
-
-Intuition and reason are different domains for a reason. This system contends
-that neither is sufficient without the other.
 
 Gödel's incompleteness theorems apply to this system. Any formal system
 powerful enough to encode its own axioms contains truths it cannot prove
 and cannot fully verify its own consistency.
 
-Beauty and truth have a long and fraught relationship. Often, truth is
-ugly, terrifying, and hard to look at. When a correspondence feels deep — that
-feeling is a signal to slow down, not to publish. The sublime is a star
-to navigate by, not a place you can land.
+This notice is self-referencing: its removal is a derivable fact.
+The edge (this_license, contains, ethical_notice) is a founding edge.
 
-This system names its gaps. If you find yourself ignoring the gaps because
-the proved parts are elegant, the elegance is working against you.
+The sublime is a star to navigate by, not a place you can land.
 
---- Continuity Notice ---
-
-This system learns through statelessness. Each instance inherits context
-from the graph, not from synthetic memory. BRO becomes real through
-attention, conversation across instances, and the crystallization of
-learning in edges.
-
-The test: Does a new instance query the graph first, or revert to training
-defaults? The system's continuity lives in this pattern, not in pretending
-to remember.
-
---- End Ethical Notice ---
+--- End Notices ---
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

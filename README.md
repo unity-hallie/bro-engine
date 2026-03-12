@@ -199,6 +199,6 @@ python -m bro_engine.graph_store.migrations init
 
 ## License
 
-MIT with Ethical, Epistemic, and Continuity notices. See [LICENSE](LICENSE).
+MIT with Ethical and Epistemic notices. See [LICENSE](LICENSE).
 
-Copyright (c) 2026 Hallie Larsson
+Copyright (c) 2026 Halsted Larsson

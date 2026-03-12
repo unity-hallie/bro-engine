@@ -3,7 +3,7 @@ name = "bro-engine"
 version = "0.1.0"
 description = "A contemplative knowledge engine for polysynthetic edge composition"
 authors = [{name = "Hallie Larsson"}]
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
 
@@ -13,7 +13,13 @@ dependencies = [
     "numpy>=1.24.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    "click>=8.0.0",
+    "mcp>=1.0.0",
 ]
+
+[project.scripts]
+bro-engine = "bro_engine.cli:main"
+bro-engine-mcp = "bro_engine.mcp_server:main"
 
 [project.optional-dependencies]
 dev = [
@@ -49,3 +55,6 @@ warn_unused_configs = true
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bro_engine*"]

@@ -87,10 +87,12 @@ class GraphStore:
                 cur.execute("""
                     INSERT INTO edges (
                         source, relationship, target, confidence, via,
-                        vector, kind, properties, qualifiers
+                        vector, kind, properties, qualifiers,
+                        touch_count, last_touched_at
                     ) VALUES (
                         %(source)s, %(relationship)s, %(target)s, %(confidence)s, %(via)s,
-                        %(vector)s, %(kind)s, %(properties)s, %(qualifiers)s
+                        %(vector)s, %(kind)s, %(properties)s, %(qualifiers)s,
+                        1, NOW()
                     )
                     RETURNING id
                 """, {
