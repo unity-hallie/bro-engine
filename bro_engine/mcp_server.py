@@ -15,6 +15,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from .graph_store import Edge, GraphStore
+from .session import begin_session, continue_session, end_session
 
 
 def get_store() -> GraphStore:
@@ -94,6 +95,32 @@ async def list_tools() -> list[Tool]:
                 "properties": {},
             },
         ),
+        Tool(
+            name="bro_begin",
+            description="Begin a session with three true things. The opening stretch - orient through what you notice as true.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "truth_1": {"type": "string", "description": "First truth"},
+                    "truth_2": {"type": "string", "description": "Second truth"},
+                    "truth_3": {"type": "string", "description": "Third truth"},
+                    "session_name": {"type": "string", "description": "Optional session name"},
+                },
+                "required": ["truth_1", "truth_2", "truth_3"],
+            },
+        ),
+        Tool(
+            name="bro_truth",
+            description="Add a new truth to an ongoing session. As truths accumulate, more edges resonate.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session ID"},
+                    "truth": {"type": "string", "description": "New truth to add"},
+                },
+                "required": ["session_id", "truth"],
+            },
+        ),
     ]
 
 
@@ -113,6 +140,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = _handle_touch(store, arguments)
         elif name == "bro_stats":
             result = _handle_stats(store)
+        elif name == "bro_begin":
+            result = _handle_begin(store, arguments)
+        elif name == "bro_truth":
+            result = _handle_truth(store, arguments)
         else:
             result = f"Unknown tool: {name}"
     finally:
@@ -224,6 +255,50 @@ def _handle_stats(store: GraphStore) -> str:
   Tested (0.7-0.95): {tiers.get('tested', 0)}
   Observed (0.4-0.7): {tiers.get('observed', 0)}
   Hypothesis (<0.4): {tiers.get('hypothesis', 0)}"""
+
+
+def _handle_begin(store: GraphStore, args: dict) -> str:
+    """Handle begin session tool."""
+    result = begin_session(
+        store,
+        args["truth_1"],
+        args["truth_2"],
+        args["truth_3"],
+        session_name=args.get("session_name"),
+    )
+
+    lines = [f"=== Session: {result['session_id']} ===", ""]
+    lines.append("Truths:")
+    for i, truth in enumerate(result['truths'], 1):
+        lines.append(f"  {i}. {truth}")
+
+    lines.append("")
+    lines.append(f"Concepts: {', '.join(result['concepts'][:10])}")
+    lines.append("")
+    lines.append("Resonant edges:")
+
+    if result['resonant_edges']:
+        for edge in result['resonant_edges'][:10]:
+            lines.append(f"  {edge}")
+    else:
+        lines.append("  (none)")
+
+    return "\n".join(lines)
+
+
+def _handle_truth(store: GraphStore, args: dict) -> str:
+    """Handle add truth tool."""
+    result = continue_session(store, args["session_id"], args["truth"])
+
+    lines = [f"Added truth #{result['total_truths']}: {result['new_truth']}", ""]
+    lines.append(f"Concepts: {', '.join(result['concepts'][:10])}")
+    lines.append("")
+    lines.append("Resonant edges:")
+
+    for edge in result['resonant_edges'][:10]:
+        lines.append(f"  {edge}")
+
+    return "\n".join(lines)
 
 
 async def main():

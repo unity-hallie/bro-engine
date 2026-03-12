@@ -14,6 +14,7 @@ from typing import Optional
 import click
 
 from .graph_store import Edge, GraphStore
+from .session import begin_session, continue_session, end_session
 
 
 def get_store() -> GraphStore:
@@ -282,6 +283,89 @@ def init(apply: bool):
     else:
         click.echo(f"Error: {result.stderr}")
         sys.exit(1)
+
+
+@cli.command()
+@click.argument('truth_1')
+@click.argument('truth_2')
+@click.argument('truth_3')
+@click.option('--name', '-n', default=None, help='Session name')
+def begin(truth_1: str, truth_2: str, truth_3: str, name: Optional[str]):
+    """
+    Begin a session with three true things.
+
+    The opening stretch. Orient through what you notice as true.
+
+    Example: bro-engine begin "the graph is alive" "I am curious" "spring is coming"
+    """
+    store = get_store()
+
+    result = begin_session(store, truth_1, truth_2, truth_3, session_name=name)
+
+    click.echo(f"=== Session: {result['session_id']} ===")
+    click.echo()
+    click.echo("Truths:")
+    for i, truth in enumerate(result['truths'], 1):
+        click.echo(f"  {i}. {truth}")
+
+    click.echo()
+    click.echo(f"Concepts extracted: {', '.join(result['concepts'][:10])}")
+
+    click.echo()
+    click.echo("=== Resonant Edges ===")
+    if result['resonant_edges']:
+        for edge in result['resonant_edges'][:15]:
+            click.echo(f"  {edge}")
+    else:
+        click.echo("  (no resonant edges found)")
+
+    store.close()
+
+
+@cli.command('truth')
+@click.argument('session_id')
+@click.argument('new_truth')
+def add_truth(session_id: str, new_truth: str):
+    """
+    Add a truth to an ongoing session.
+
+    As truths accumulate, more edges resonate.
+
+    Example: bro-engine truth session_20260311_220000 "the thinking layer wants to flow"
+    """
+    store = get_store()
+
+    result = continue_session(store, session_id, new_truth)
+
+    click.echo(f"Added truth #{result['total_truths']}: {new_truth}")
+    click.echo()
+    click.echo(f"Concepts: {', '.join(result['concepts'][:10])}")
+    click.echo()
+    click.echo("=== Resonant Edges ===")
+    for edge in result['resonant_edges'][:10]:
+        click.echo(f"  {edge}")
+
+    store.close()
+
+
+@cli.command('end')
+@click.argument('session_id')
+@click.option('--summary', '-s', default=None, help='Session summary')
+def end(session_id: str, summary: Optional[str]):
+    """
+    End a session.
+
+    Example: bro-engine end session_20260311_220000 -s "discovered the thinking layer"
+    """
+    store = get_store()
+
+    end_session(store, session_id, summary)
+
+    click.echo(f"Session ended: {session_id}")
+    if summary:
+        click.echo(f"Summary: {summary}")
+
+    store.close()
 
 
 def main():
