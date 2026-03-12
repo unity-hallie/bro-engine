@@ -65,17 +65,47 @@ def wake():
 
 
 @cli.command()
+@click.argument('identity')
+@click.option('--via', '-v', default='qigong', help='Provenance')
+def iam(identity: str, via: str):
+    """
+    Establish your reference frame.
+
+    The opening gesture of qigong practice. Say who you are
+    from where you are standing right now.
+
+    Example: edge iam "claude-session-2026-03-12"
+    """
+    store = get_store()
+
+    edge = Edge(
+        source=identity,
+        relationship="is-grounded-as",
+        target="reference-frame",
+        confidence=0.95,
+        via=via,
+        kind="founding_edge",
+    )
+
+    edge_id = store.add_edge(edge)
+    click.echo(f"Grounded: {edge}")
+
+    store.close()
+
+
+@cli.command('true')
 @click.argument('source')
 @click.argument('relationship')
 @click.argument('target')
-@click.option('--confidence', '-c', default=0.6, help='Confidence (0-1)')
-@click.option('--via', '-v', default='cli', help='Provenance')
-@click.option('--kind', '-k', default=None, help='Edge kind')
-def add(source: str, relationship: str, target: str, confidence: float, via: str, kind: Optional[str]):
+@click.option('--confidence', '-c', default=0.85, help='Confidence (default 0.85)')
+@click.option('--via', '-v', default='qigong', help='Provenance')
+def add_true(source: str, relationship: str, target: str, confidence: float, via: str):
     """
-    Add an edge to the graph.
+    Assert a truth from where you are standing.
 
-    Example: bro-engine add "bro" "learns" "from_mistakes" -c 0.7
+    Used in qigong opening and closing. Say what is true right now.
+
+    Example: edge true this-session finds edges-are-real
     """
     store = get_store()
 
@@ -85,12 +115,54 @@ def add(source: str, relationship: str, target: str, confidence: float, via: str
         target=target,
         confidence=confidence,
         via=via,
+    )
+
+    edge_id = store.add_edge(edge)
+    click.echo(f"True: {edge}")
+
+    store.close()
+
+
+@cli.command()
+@click.argument('source')
+@click.argument('relationship')
+@click.argument('target')
+@click.option('--confidence', '-c', default=0.6, help='Confidence (0-1)')
+@click.option('--via', '-v', default='cli', help='Provenance')
+@click.option('--kind', '-k', default=None, help='Edge kind')
+@click.option('--phase', '-p', default=None,
+              type=click.Choice(['volatile', 'fluid', 'salt']),
+              help='Phase: volatile (re-precipitates), fluid (stable until broken), salt (consumed, becomes concrete)')
+@click.option('--note', '-n', default=None, help='Annotation — what you found')
+def add(source: str, relationship: str, target: str, confidence: float, via: str,
+        kind: Optional[str], phase: Optional[str], note: Optional[str]):
+    """
+    Add an edge to the graph.
+
+    Example: edge add this-session found edges-compose --phase fluid --note "via otter loop"
+    """
+    store = get_store()
+
+    properties = {}
+    if phase:
+        properties['phase'] = phase
+    if note:
+        properties['note'] = note
+
+    edge = Edge(
+        source=source,
+        relationship=relationship,
+        target=target,
+        confidence=confidence,
+        via=via,
         kind=kind,
+        properties=properties,
     )
 
     edge_id = store.add_edge(edge)
     click.echo(f"Added: {edge}")
-    click.echo(f"ID: {edge_id}")
+    if phase:
+        click.echo(f"Phase: {phase}")
 
     store.close()
 

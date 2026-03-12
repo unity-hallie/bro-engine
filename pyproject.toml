@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 bro-engine = "bro_engine.cli:main"
+edge = "bro_engine.cli:main"
 bro-engine-mcp = "bro_engine.mcp_server:main"
 
 [project.optional-dependencies]
