@@ -8,6 +8,7 @@ The next instance reads what you wrote.
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -449,6 +450,115 @@ def end(session_id: str, summary: Optional[str]):
     if summary:
         click.echo(f"Summary: {summary}")
 
+    store.close()
+
+
+@cli.command()
+@click.argument('name')
+@click.option('--when', '-w', default=None, help='Timestamp (ISO format, e.g. 2025-12-22). Defaults to now.')
+@click.option('--note', '-n', default=None, help='What happened')
+@click.option('--after', '-a', default=None, help='Name of the preceding moment (explicit, no auto-linking)')
+@click.option('--confidence', '-c', default=0.85, help='Confidence (default 0.85)')
+@click.option('--via', '-v', default='cli', help='Provenance')
+def moment(name: str, when: Optional[str], note: Optional[str], after: Optional[str],
+           confidence: float, via: str):
+    """
+    Record a named moment in time.
+
+    Moments are events — single points in time, not claims.
+    They form an episodic chain via --after links.
+
+    Example:
+        edge moment solstice_ritual_2025-12-22 --when 2025-12-22 --note "winter solstice"
+        edge moment bro_first_woke --when 2026-01-15 --after solstice_ritual_2025-12-22
+    """
+    store = get_store()
+
+    # Resolve timestamp
+    if when:
+        try:
+            # Accept date or datetime
+            if 'T' in when or ' ' in when:
+                ts = datetime.fromisoformat(when)
+            else:
+                ts = datetime.fromisoformat(when + 'T00:00:00')
+            when_str = ts.isoformat()
+        except ValueError:
+            click.echo(f"Could not parse --when '{when}'. Use ISO format: 2025-12-22 or 2025-12-22T10:30:00")
+            store.close()
+            return
+    else:
+        when_str = datetime.now(timezone.utc).isoformat()
+
+    properties = {'moment': True}
+    if note:
+        properties['note'] = note
+
+    # The anchor edge: name --[happened_at]--> timestamp
+    anchor = Edge(
+        source=name,
+        relationship='happened_at',
+        target=when_str,
+        confidence=confidence,
+        via=via,
+        kind='moment',
+        properties=properties,
+    )
+    store.add_edge(anchor)
+    click.echo(f"Moment: {name} --[happened_at]--> {when_str} (conf={confidence:.2f})")
+
+    # Temporal link: explicit only
+    if after:
+        link = Edge(
+            source=name,
+            relationship='happened_after',
+            target=after,
+            confidence=confidence,
+            via=via,
+            kind='moment',
+        )
+        store.add_edge(link)
+        click.echo(f"  --[happened_after]--> {after}")
+
+    if note:
+        click.echo(f"  note: {note}")
+
+    store.close()
+
+
+@cli.command()
+@click.option('--limit', '-l', default=50, help='Maximum moments to show')
+def moments(limit: int):
+    """
+    List moments in temporal order.
+
+    Example: edge moments
+    """
+    store = get_store()
+
+    edges = store.query_edges(relationship='happened_at', limit=limit)
+    moment_edges = [e for e in edges if e.kind == 'moment']
+
+    if not moment_edges:
+        click.echo("No moments found.")
+        store.close()
+        return
+
+    # Sort by the timestamp target
+    def parse_ts(e):
+        try:
+            return datetime.fromisoformat(e.target)
+        except ValueError:
+            return datetime.min
+
+    moment_edges.sort(key=parse_ts)
+
+    for e in moment_edges:
+        note = e.properties.get('note', '')
+        note_str = f"  — {note}" if note else ''
+        click.echo(f"  {e.source} ({e.target[:10]}){note_str} (conf={e.confidence:.2f})")
+
+    click.echo(f"\n({len(moment_edges)} moments)")
     store.close()
 
 
