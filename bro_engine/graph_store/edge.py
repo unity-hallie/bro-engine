@@ -166,4 +166,4 @@ class Edge:
         """Human-readable representation."""
         kind_str = f" [{self.kind}]" if self.kind else ""
         conf_str = f" (conf={self.confidence:.2f})"
-        return f"{self.source} --[{self.relationship}]--> {self.target}{kind_str}{conf_str}"
+        return f"{self.source} ~{self.relationship.upper()}~> {self.target}{kind_str}{conf_str}"

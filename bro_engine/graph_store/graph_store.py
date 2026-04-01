@@ -274,7 +274,7 @@ class GraphStore:
         Find edges similar to a query vector.
 
         Args:
-            vector: Query vector (512 dimensions)
+            vector: Query vector (384 dimensions, all-MiniLM-L6-v2)
             limit: Maximum edges to return
             min_confidence: Minimum confidence threshold
 
@@ -352,6 +352,64 @@ class GraphStore:
                 cur.execute("SELECT touch_edge(%s)", (edge_id,))
                 return True
 
+    def query_derived_from(self, source: str, relationship: str, target: str) -> list[Edge]:
+        """
+        Find edges whose properties record derivation from a specific edge triple.
+
+        Looks for properties->>'derived_from' matching the canonical triple string.
+        """
+        triple = f"{source} --[{relationship}]--> {target}"
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM edges
+                    WHERE properties->>'derived_from' = %(triple)s
+                    AND invalidated_at IS NULL
+                    ORDER BY ts DESC
+                """, {"triple": triple})
+                return [_row_to_edge(row) for row in cur.fetchall()]
+
+    def grief_active_relationships(self) -> list[str]:
+        """
+        Return all relationship names declared as grief-active.
+
+        A relationship is grief-active when an edge exists:
+            <relationship-name> --[is]--> grief-active
+
+        These relationship types participate in grief cascade: when a node
+        is grieved, edges using these relationships whose target matches
+        the grieved node surface their sources as standing on grieved ground.
+        """
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT source FROM edges
+                    WHERE relationship = 'is'
+                    AND target = 'grief-active'
+                    AND invalidated_at IS NULL
+                """)
+                return [row['source'] for row in cur.fetchall()]
+
+    def query_grief_dependents(self, node: str, grief_active_rels: list[str]) -> list[Edge]:
+        """
+        Find edges standing on grieved ground via grief-active relationships.
+
+        For each grief-active relationship R: finds edges X --[R]--> node,
+        meaning X depends on node being true. If node is grieved, X is downstream.
+        """
+        if not grief_active_rels:
+            return []
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM edges
+                    WHERE relationship = ANY(%(rels)s)
+                    AND target = %(node)s
+                    AND invalidated_at IS NULL
+                    ORDER BY ts DESC
+                """, {"rels": grief_active_rels, "node": node})
+                return [_row_to_edge(row) for row in cur.fetchall()]
+
     def decay_hot_scores(self) -> int:
         """
         Decay hot scores across all edges.
@@ -394,6 +452,84 @@ class GraphStore:
                     LIMIT %s
                 """, (limit,))
                 return [_row_to_edge(row) for row in cur.fetchall()]
+
+    def open_sessions(self, orphan_threshold_hours: int = 1) -> list[dict]:
+        """
+        Find sessions that were opened but never closed.
+
+        A session is open if it has a began_at edge but no ended_at edge.
+        Sessions older than orphan_threshold_hours are flagged as orphaned.
+
+        Returns:
+            List of dicts with session_id, opened_at, edge_count, orphaned
+        """
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        b.source as session_id,
+                        b.target as opened_at,
+                        b.ts as opened_ts,
+                        COUNT(e.id) as edge_count
+                    FROM edges b
+                    LEFT JOIN edges e
+                        ON e.via = b.source
+                        AND e.invalidated_at IS NULL
+                    WHERE b.relationship = 'began_at'
+                      AND b.invalidated_at IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM edges x
+                          WHERE x.source = b.source
+                            AND x.relationship = 'ended_at'
+                            AND x.invalidated_at IS NULL
+                      )
+                    GROUP BY b.source, b.target, b.ts
+                    ORDER BY b.ts DESC
+                """)
+                rows = cur.fetchall()
+
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        result = []
+        for row in rows:
+            opened_ts = row["opened_ts"]
+            if opened_ts and opened_ts.tzinfo is None:
+                opened_ts = opened_ts.replace(tzinfo=timezone.utc)
+            age_hours = (now - opened_ts).total_seconds() / 3600 if opened_ts else 0
+            result.append({
+                "session_id": row["session_id"],
+                "opened_at": row["opened_at"],
+                "edge_count": row["edge_count"],
+                "orphaned": age_hours > orphan_threshold_hours,
+                "age_hours": round(age_hours, 1),
+            })
+        return result
+
+    def validate_session(self, session_id: str) -> bool:
+        """
+        Check if a session is currently open (began but not ended).
+
+        Returns:
+            True if session is valid and open, False otherwise
+        """
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM edges
+                        WHERE source = %(sid)s
+                          AND relationship = 'began_at'
+                          AND invalidated_at IS NULL
+                    ) as has_start,
+                    EXISTS(
+                        SELECT 1 FROM edges
+                        WHERE source = %(sid)s
+                          AND relationship = 'ended_at'
+                          AND invalidated_at IS NULL
+                    ) as has_end
+                """, {"sid": session_id})
+                row = cur.fetchone()
+                return bool(row["has_start"] and not row["has_end"])
 
     def stale_edges(self, limit: int = 50) -> list[Edge]:
         """Get edges that haven't been touched in 90 days."""

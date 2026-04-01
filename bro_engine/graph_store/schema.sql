@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS edges (
     via TEXT DEFAULT '', -- Provenance (reading session, etc.)
 
     -- Geometric properties
-    vector vector(512),  -- Position in morpheme space (pgvector type)
+    vector vector(384),  -- Position in morpheme space (pgvector type)
     prime BIGINT,        -- Optional compact encoding
 
     -- Polymorphic edge kinds
@@ -65,7 +65,7 @@ WHERE invalidated_at IS NULL AND vector IS NOT NULL;
 CREATE TABLE IF NOT EXISTS field_vectors (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT UNIQUE NOT NULL,  -- e.g., "frankenstein_reading"
-    vector vector(512) NOT NULL,
+    vector vector(384) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     edge_count INTEGER DEFAULT 0,  -- How many edges contributed to this field
     avg_confidence REAL DEFAULT 0.0,
@@ -143,7 +143,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function: Find similar edges (geometric)
 CREATE OR REPLACE FUNCTION find_similar_edges(
-    query_vector vector(512),
+    query_vector vector(384),
     limit_count INTEGER DEFAULT 10,
     min_confidence REAL DEFAULT 0.0
 )
@@ -189,7 +189,7 @@ RETURNS TABLE (
     resonance REAL
 ) AS $$
 DECLARE
-    field_vec vector(512);
+    field_vec vector(384);
 BEGIN
     -- Get field vector
     SELECT vector INTO field_vec
@@ -218,3 +218,19 @@ BEGIN
     LIMIT limit_count;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Trigger: notify embed indexer when a new unvectorized edge is inserted
+CREATE OR REPLACE FUNCTION notify_new_edge()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.vector IS NULL THEN
+        PERFORM pg_notify('bro_new_edge', NEW.id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_notify_new_edge ON edges;
+CREATE TRIGGER trg_notify_new_edge
+    AFTER INSERT ON edges
+    FOR EACH ROW EXECUTE FUNCTION notify_new_edge();

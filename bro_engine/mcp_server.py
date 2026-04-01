@@ -5,9 +5,11 @@ Exposes the graph to Claude via Model Context Protocol.
 Tools: wake, add_edge, query_edges, touch_edge
 """
 
+import importlib
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from mcp.server import Server
@@ -17,10 +19,54 @@ from mcp.types import Tool, TextContent
 from .graph_store import Edge, GraphStore
 from .session import begin_session, continue_session, end_session
 
+ATTENTION_FILE = Path.home() / '.bro_attention'
+ATTENTION_STRATEGIES = ['vector_only', 'node_fanout', 'hot_weighted', 'recent']
+HOOKS_DIR = Path(__file__).parent.parent / 'hooks'
+
 
 def get_store() -> GraphStore:
     conn_string = os.environ.get('BRO_ENGINE_DB', 'postgresql:///bro_engine')
     return GraphStore(conn_string)
+
+
+def _current_strategy() -> str:
+    if ATTENTION_FILE.exists():
+        return ATTENTION_FILE.read_text().strip() or "node_fanout"
+    return "node_fanout"
+
+
+def _fmt_edge(r, layer=None):
+    """Format an edge dict or Edge object for display. One line, deduped-aware."""
+    if hasattr(r, 'source'):
+        # Edge object
+        conf = f"{r.confidence:.2f}"
+        return f"  [{conf}conf] {r.source} —{r.relationship}→ {r.target}"
+    # dict from raw query
+    conf = f"{r['confidence']:.2f}"
+    obs = r.get('observations', 1)
+    obs_str = f" ({obs}x)" if obs > 1 else ""
+    sim = ""
+    if layer:
+        sim_val = f"{r.get('similarity', 0):.2f}"
+        sim = f"{layer} {sim_val}~"
+    return f"  [{sim}{conf}conf{obs_str}] {r['source']} —{r['relationship']}→ {r['target']}"
+
+
+# Chain-of-title neighbor query — deduped, with observation count
+NEIGHBORS_SQL = """
+    SELECT source, relationship, target,
+           MAX(confidence) as confidence,
+           COUNT(*) as observations,
+           MIN(ts) as first_seen,
+           MAX(ts) as last_seen,
+           MAX(COALESCE(hot, 0)) as hot
+    FROM edges
+    WHERE invalidated_at IS NULL
+      AND (source = %(node)s OR target = %(node)s)
+    GROUP BY source, relationship, target
+    ORDER BY MAX(confidence) DESC
+    LIMIT %(limit)s
+"""
 
 
 # Create server instance
@@ -41,7 +87,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="bro_add_edge",
-            description="Add an edge to the knowledge graph. An edge is a triple (source, relationship, target) with confidence.",
+            description="Add an edge to the knowledge graph. Requires an active session (call bro_begin first). An edge is a triple (source, relationship, target) with confidence.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -53,13 +99,12 @@ async def list_tools() -> list[Tool]:
                         "description": "Epistemic confidence 0-1. 0.1-0.3: speculation, 0.4-0.6: observed, 0.7-0.9: tested, 0.95+: founding",
                         "default": 0.6,
                     },
-                    "via": {
+                    "session_id": {
                         "type": "string",
-                        "description": "Provenance - what context created this edge",
-                        "default": "mcp_session",
+                        "description": "Active session ID from bro_begin. Required — edges must be grounded in a session.",
                     },
                 },
-                "required": ["source", "relationship", "target"],
+                "required": ["source", "relationship", "target", "session_id"],
             },
         ),
         Tool(
@@ -93,6 +138,49 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {},
+            },
+        ),
+        Tool(
+            name="bro_attend",
+            description="Set or show the attention strategy. Controls how the graph activates when searching. Strategies: vector_only (pure cosine), node_fanout (vector seeds → all neighbor edges), hot_weighted (fan-out ranked by recency × confidence).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "strategy": {
+                        "type": "string",
+                        "description": "Strategy name. Omit to see current.",
+                        "enum": ATTENTION_STRATEGIES,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="bro_search",
+            description="Semantic search: embed a query and run the active attention strategy. Returns edges the graph surfaces for that query. Use this to actively pull context when something feels relevant.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for"},
+                    "top_k": {"type": "integer", "description": "Max edges to return", "default": 12},
+                    "strategy": {
+                        "type": "string",
+                        "description": "Override strategy for this search. Omit to use current.",
+                        "enum": ATTENTION_STRATEGIES,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="bro_neighbors",
+            description="Get all edges touching a node. Pull a node's full neighborhood.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "node": {"type": "string", "description": "Node name (source or target)"},
+                    "limit": {"type": "integer", "description": "Max results", "default": 20},
+                },
+                "required": ["node"],
             },
         ),
         Tool(
@@ -151,6 +239,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = _handle_touch(store, arguments)
         elif name == "bro_stats":
             result = _handle_stats(store)
+        elif name == "bro_attend":
+            result = _handle_attend(arguments)
+        elif name == "bro_search":
+            result = _handle_search(store, arguments)
+        elif name == "bro_neighbors":
+            result = _handle_neighbors(store, arguments)
         elif name == "bro_begin":
             result = _handle_begin(store, arguments)
         elif name == "bro_truth":
@@ -163,39 +257,47 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=result)]
 
 
+def _section(title, edges, lines):
+    """Append a titled section of edges to lines."""
+    lines.append(f"=== {title} ===")
+    if edges:
+        for edge in edges:
+            lines.append(_fmt_edge(edge))
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+
 def _handle_wake(store: GraphStore) -> str:
     """Handle wake tool."""
-    lines = ["=== Founding Edges (constitutional) ==="]
-    for edge in store.founding_edges(limit=10):
-        lines.append(f"  {edge}")
+    lines = []
+    _section("Founding Edges (constitutional)", store.founding_edges(limit=10), lines)
+    _section("Recent Edges (last 7 days)", store.recent_edges(limit=10), lines)
+    _section("Stale Edges (need revalidation)", store.stale_edges(limit=5), lines)
 
-    lines.append("")
-    lines.append("=== Recent Edges (last 7 days) ===")
-    recent = store.recent_edges(limit=10)
-    if recent:
-        for edge in recent:
-            lines.append(f"  {edge}")
-    else:
-        lines.append("  (none)")
-
-    lines.append("")
-    lines.append("=== Stale Edges (need revalidation) ===")
-    stale = store.stale_edges(limit=5)
-    if stale:
-        for edge in stale:
-            lines.append(f"  {edge}")
-    else:
-        lines.append("  (none)")
+    open_sessions = store.open_sessions()
+    if open_sessions:
+        lines.append("=== Open Sessions ===")
+        for s in open_sessions:
+            status = "[orphaned]" if s["orphaned"] else "[active]"
+            lines.append(f"  {status} {s['session_id']} — opened {s['age_hours']}h ago, {s['edge_count']} edges written")
+        lines.append("")
 
     return "\n".join(lines)
 
 
 def _handle_add_edge(store: GraphStore, args: dict) -> str:
-    """Handle add_edge tool."""
-    confidence = args.get("confidence", 0.6)
-    via = args.get("via", "mcp_session")
+    """Handle add_edge tool. Requires an active session."""
+    session_id = args["session_id"]
 
-    # Determine if founding edge
+    if not store.validate_session(session_id):
+        return (
+            f"No active session: '{session_id}'\n"
+            "Call bro_begin with three true things to open a session first.\n"
+            "Check bro_wake for any open sessions you may have left."
+        )
+
+    confidence = args.get("confidence", 0.6)
     kind = "founding_edge" if confidence > 0.95 else None
 
     edge = Edge(
@@ -203,11 +305,16 @@ def _handle_add_edge(store: GraphStore, args: dict) -> str:
         relationship=args["relationship"],
         target=args["target"],
         confidence=confidence,
-        via=via,
+        via=session_id,
         kind=kind,
     )
 
     edge_id = store.add_edge(edge)
+
+    # Link edge to its session (provenance chain)
+    from .session import _write_created_during
+    _write_created_during(store, str(edge_id), session_id)
+
     return f"Added edge: {edge}\nID: {edge_id}"
 
 
@@ -226,7 +333,7 @@ def _handle_query(store: GraphStore, args: dict) -> str:
 
     lines = [f"Found {len(edges)} edges:"]
     for edge in edges:
-        lines.append(f"  [{edge.id[:8]}] {edge}")
+        lines.append(_fmt_edge(edge))
 
     return "\n".join(lines)
 
@@ -266,6 +373,82 @@ def _handle_stats(store: GraphStore) -> str:
   Tested (0.7-0.95): {tiers.get('tested', 0)}
   Observed (0.4-0.7): {tiers.get('observed', 0)}
   Hypothesis (<0.4): {tiers.get('hypothesis', 0)}"""
+
+
+def _handle_attend(args: dict) -> str:
+    """Get or set attention strategy."""
+    strategy = args.get("strategy")
+    if strategy is None:
+        return f"Attending: {_current_strategy()}\nAvailable: {', '.join(ATTENTION_STRATEGIES)}"
+
+    if strategy not in ATTENTION_STRATEGIES:
+        return f"Unknown: {strategy}\nAvailable: {', '.join(ATTENTION_STRATEGIES)}"
+
+    ATTENTION_FILE.write_text(strategy)
+    return f"Attending: {strategy}"
+
+
+def _get_embed_model():
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+
+def _load_attention_strategy(name: str):
+    """Load an attention strategy from hooks/attention/."""
+    sys.path.insert(0, str(HOOKS_DIR))
+    try:
+        mod = importlib.import_module(f"attention.{name}")
+        return mod.attend
+    finally:
+        sys.path.pop(0)
+
+
+def _handle_search(store: GraphStore, args: dict) -> str:
+    """Semantic search using active attention strategy."""
+    query = args["query"]
+    top_k = args.get("top_k", 12)
+    strategy_name = args.get("strategy") or _current_strategy()
+
+    model = _get_embed_model()
+    vec = model.encode(query, normalize_embeddings=True).tolist()
+
+    attend = _load_attention_strategy(strategy_name)
+
+    from psycopg.rows import dict_row
+    with store.connection() as conn:
+        old_factory = conn.row_factory
+        conn.row_factory = dict_row
+        edges = attend(vec, conn, top_k=top_k, min_sim=0.20)
+        conn.row_factory = old_factory
+
+    if not edges:
+        return f"No edges activated for: {query}"
+
+    lines = [f"Search: \"{query}\" ({strategy_name}, {len(edges)} edges):"]
+    for e in edges:
+        lines.append(_fmt_edge(e, layer=e.get("layer", "?")))
+
+    return "\n".join(lines)
+
+
+def _handle_neighbors(store: GraphStore, args: dict) -> str:
+    """Get all edges touching a node, deduped with chain-of-title."""
+    node = args["node"]
+    limit = args.get("limit", 20)
+
+    with store.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(NEIGHBORS_SQL, {"node": node, "limit": limit})
+            rows = cur.fetchall()
+
+    if not rows:
+        return f"No edges touching: {node}"
+
+    lines = [f"Neighbors of {node} ({len(rows)} edges):"]
+    for r in rows:
+        lines.append(_fmt_edge(r))
+
+    return "\n".join(lines)
 
 
 def _handle_begin(store: GraphStore, args: dict) -> str:
@@ -313,12 +496,13 @@ def _handle_truth(store: GraphStore, args: dict) -> str:
     return "\n".join(lines)
 
 
-async def main():
+async def _run():
     """Run the MCP server."""
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for bro-engine-mcp."""
     import asyncio
-    asyncio.run(main())
+    asyncio.run(_run())

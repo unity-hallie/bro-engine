@@ -16,12 +16,30 @@ import click
 
 from .graph_store import Edge, GraphStore
 from .session import begin_session, continue_session, end_session
+from .dream import dream_cycle, dream_loop
+from .spectrum import run_spectrum, compare_dream_and_spectrum
 
 
 def get_store() -> GraphStore:
     """Get GraphStore from environment or default."""
     conn_string = os.environ.get('BRO_ENGINE_DB', 'postgresql:///bro_engine')
     return GraphStore(conn_string)
+
+
+FRAME_FILE = Path.home() / '.bro_frame'
+ATTENTION_FILE = Path.home() / '.bro_attention'
+
+
+def get_frame() -> Optional[str]:
+    """Read the current reference frame established by edge iam."""
+    if FRAME_FILE.exists():
+        return FRAME_FILE.read_text().strip() or None
+    return None
+
+
+def set_frame(identity: str) -> None:
+    """Persist the current reference frame."""
+    FRAME_FILE.write_text(identity)
 
 
 @click.group()
@@ -79,6 +97,8 @@ def iam(identity: str, via: str):
     """
     store = get_store()
 
+    set_frame(identity)
+
     edge = Edge(
         source=identity,
         relationship="is-grounded-as",
@@ -94,12 +114,42 @@ def iam(identity: str, via: str):
     store.close()
 
 
+ATTENTION_STRATEGIES = ['vector_only', 'node_fanout', 'hot_weighted', 'recent']
+
+
+@cli.command()
+@click.argument('strategy', required=False, default=None)
+def attend(strategy: Optional[str]):
+    """
+    Set or show the attention strategy.
+
+    How the graph activates when you speak.
+
+    Examples:
+        edge attend              # show current
+        edge attend node_fanout  # set strategy
+    """
+    if strategy is None:
+        current = ATTENTION_FILE.read_text().strip() if ATTENTION_FILE.exists() else 'node_fanout'
+        click.echo(f"Attending: {current}")
+        click.echo(f"Available: {', '.join(ATTENTION_STRATEGIES)}")
+        return
+
+    if strategy not in ATTENTION_STRATEGIES:
+        click.echo(f"Unknown strategy: {strategy}")
+        click.echo(f"Available: {', '.join(ATTENTION_STRATEGIES)}")
+        sys.exit(1)
+
+    ATTENTION_FILE.write_text(strategy)
+    click.echo(f"Attending: {strategy}")
+
+
 @cli.command('true')
 @click.argument('source')
 @click.argument('relationship')
 @click.argument('target')
 @click.option('--confidence', '-c', default=0.85, help='Confidence (default 0.85)')
-@click.option('--via', '-v', default='qigong', help='Provenance')
+@click.option('--via', '-v', default=None, help='Provenance (defaults to current frame)')
 def add_true(source: str, relationship: str, target: str, confidence: float, via: str):
     """
     Assert a truth from where you are standing.
@@ -109,6 +159,9 @@ def add_true(source: str, relationship: str, target: str, confidence: float, via
     Example: edge true this-session finds edges-are-real
     """
     store = get_store()
+    frame = get_frame()
+    via = via or frame or 'qigong'
+    qualifiers = [f"frame:{frame}"] if frame else []
 
     edge = Edge(
         source=source,
@@ -116,6 +169,7 @@ def add_true(source: str, relationship: str, target: str, confidence: float, via
         target=target,
         confidence=confidence,
         via=via,
+        qualifiers=qualifiers,
     )
 
     edge_id = store.add_edge(edge)
@@ -129,26 +183,36 @@ def add_true(source: str, relationship: str, target: str, confidence: float, via
 @click.argument('relationship')
 @click.argument('target')
 @click.option('--confidence', '-c', default=0.6, help='Confidence (0-1)')
-@click.option('--via', '-v', default='cli', help='Provenance')
+@click.option('--via', '-v', default=None, help='Provenance (defaults to current frame)')
 @click.option('--kind', '-k', default=None, help='Edge kind')
 @click.option('--phase', '-p', default=None,
               type=click.Choice(['volatile', 'fluid', 'salt']),
               help='Phase: volatile (re-precipitates), fluid (stable until broken), salt (consumed, becomes concrete)')
 @click.option('--note', '-n', default=None, help='Annotation — what you found')
+@click.option('--because', '-b', nargs=3, default=None, metavar='SOURCE RELATIONSHIP TARGET',
+              help='Record that this edge is derived from another edge')
 def add(source: str, relationship: str, target: str, confidence: float, via: str,
-        kind: Optional[str], phase: Optional[str], note: Optional[str]):
+        kind: Optional[str], phase: Optional[str], note: Optional[str],
+        because: Optional[tuple]):
     """
     Add an edge to the graph.
 
     Example: edge add this-session found edges-compose --phase fluid --note "via otter loop"
+    Example: edge add B implies C --because A implies B
     """
     store = get_store()
+    frame = get_frame()
+    via = via or frame or 'cli'
+    qualifiers = [f"frame:{frame}"] if frame else []
 
     properties = {}
     if phase:
         properties['phase'] = phase
     if note:
         properties['note'] = note
+    if because:
+        bs, br, bt = because
+        properties['derived_from'] = f"{bs} --[{br}]--> {bt}"
 
     edge = Edge(
         source=source,
@@ -158,12 +222,129 @@ def add(source: str, relationship: str, target: str, confidence: float, via: str
         via=via,
         kind=kind,
         properties=properties,
+        qualifiers=qualifiers,
     )
 
     edge_id = store.add_edge(edge)
     click.echo(f"Added: {edge}")
     if phase:
         click.echo(f"Phase: {phase}")
+
+    store.close()
+
+
+@cli.command()
+@click.argument('source')
+@click.argument('relationship')
+@click.argument('target')
+@click.option('--now', default=None, help='What is true now (what superseded this)')
+@click.option('--note', '-n', default=None, help='What you are holding')
+def grieve(source: str, relationship: str, target: str, now: Optional[str], note: Optional[str]):
+    """
+    Grieve a truth that was real and is no longer current.
+
+    Holds the old truth. Names the transition. Does not erase.
+    Witnesses what was, from where you are now.
+
+    Example: edge grieve bro uses bro_graph.sqlite --now postgresql
+    """
+    store = get_store()
+    frame = get_frame()
+
+    # Find the old edge(s)
+    old_edges = store.query_edges(source=source, relationship=relationship, target=target)
+
+    # Touch each — it was seen, not erased
+    for e in old_edges:
+        if e.id:
+            store.touch(e.id)
+
+    # Build grief properties
+    properties: dict = {'grief': True}
+    if note:
+        properties['note'] = note
+
+    # Compute interference if we have a current truth to grieve against
+    if now:
+        new_edges = store.query_edges(source=source, relationship=relationship, target=now)
+        old_conf = max((e.confidence for e in old_edges), default=0.85)
+        new_conf = max((e.confidence for e in new_edges), default=0.85)
+        # Destructive: two truths, same predicate, different targets
+        interference_score = -(old_conf * new_conf)
+        properties['interference'] = round(interference_score, 3)
+        properties['old_truth'] = f"{source} --[{relationship}]--> {target}"
+        properties['new_truth'] = f"{source} --[{relationship}]--> {now}"
+
+    # Grief edge
+    qualifiers = ['grief']
+    if frame:
+        qualifiers.append(f"frame:{frame}")
+
+    grief_target = f"superseded-by-{now}" if now else "held-in-past-frame"
+
+    grief_edge = Edge(
+        source=f"{source}-{relationship}-{target}",
+        relationship='is-grieved-as',
+        target=grief_target,
+        confidence=0.85,
+        via=frame or 'grief',
+        qualifiers=qualifiers,
+        properties=properties,
+    )
+
+    store.add_edge(grief_edge)
+
+    # Output
+    old_frame = None
+    if old_edges:
+        old_frame = next((q for q in old_edges[0].qualifiers if q.startswith('frame:')), None)
+
+    click.echo(f"\nGrieved: {source} --[{relationship}]--> {target}")
+    if old_edges:
+        e = old_edges[0]
+        frame_label = old_frame or 'unframed'
+        click.echo(f"  was: conf={e.confidence}, via={e.via} ({frame_label})")
+    else:
+        click.echo(f"  was: (no edge found — grieving from memory)")
+    if now:
+        click.echo(f"  now: {source} --[{relationship}]--> {now}")
+        click.echo(f"  interference: {properties.get('interference', 0):.3f}  (destructive)")
+    click.echo(f"  held: {grief_edge.source} --[{grief_edge.relationship}]--> {grief_edge.target}")
+
+    # Surface cascade — two mechanisms:
+    # 1. Explicit: edges with derived_from in properties (--because)
+    # 2. Implicit: edges using grief-active relationships pointing at grieved nodes
+    grief_rels = store.grief_active_relationships()
+
+    seen: set[str] = set()
+
+    def surface_cascade(s: str, r: str, t: str, depth: int = 0) -> None:
+        indent = "  " + ("  " * depth)
+        dependents: list[Edge] = []
+
+        # Explicit derivation
+        dependents += store.query_derived_from(s, r, t)
+
+        # Implicit: grief-active relationships pointing at the source or target nodes
+        for node in (s, t):
+            dependents += store.query_grief_dependents(node, grief_rels)
+
+        for dep in dependents:
+            key = f"{dep.source}-{dep.relationship}-{dep.target}"
+            if key in seen:
+                continue
+            seen.add(key)
+            click.echo(f"{indent}↳ {dep.source} --[{dep.relationship}]--> {dep.target}  "
+                       f"[built on grieved ground]")
+            surface_cascade(dep.source, dep.relationship, dep.target, depth + 1)
+
+    # Seed seen with the grieved edge itself to avoid self-loops
+    seen.add(f"{source}-{relationship}-{target}")
+
+    click.echo(f"\n  Standing on grieved ground:")
+    surface_cascade(source, relationship, target)
+    if len(seen) == 1:
+        click.echo(f"  (none found — declare relationships grief-active to enable cascade)")
 
     store.close()
 
@@ -202,6 +383,7 @@ def query(source, relationship, target, via, min_confidence, limit, as_json):
                 'confidence': e.confidence,
                 'via': e.via,
                 'kind': e.kind,
+                'qualifiers': e.qualifiers,
             }
             for e in edges
         ]
@@ -615,6 +797,95 @@ def install_skills(force: bool):
         click.echo(f"\n{len(installed)} skill(s) installed. Restart Claude Code to pick them up.")
     else:
         click.echo("\nNo new skills installed.")
+
+
+@cli.command()
+@click.option('--once', is_flag=True, help='Run a single dream cycle and exit')
+@click.option('--interval', default=600, type=int, help='Seconds between cycles (default 600)')
+@click.option('--batch-size', default=30, type=int, help='Hot edges per cycle')
+@click.option('--dry-run', is_flag=True, help='Show what would happen without writing')
+def dream(once: bool, interval: int, batch_size: int, dry_run: bool):
+    """
+    Run the dream loop. Cooling for the graph.
+
+    Pulls hot edges, surfaces them to a dreamer LLM, writes back
+    connections it notices, grieves tensions it finds.
+
+    Examples:
+        bro-engine dream              # loop every 10 min
+        bro-engine dream --once       # single cycle
+        bro-engine dream --interval 300  # every 5 min
+    """
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [dream] %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
+    store = get_store()
+
+    if once or dry_run:
+        result = dream_cycle(store, batch_size=batch_size, dry_run=dry_run)
+
+        if result.get("skipped"):
+            click.echo("No hot edges. The graph is cool.")
+        else:
+            click.echo(f"Hot edges:    {result['hot_edges']}")
+            click.echo(f"Connections:  {result['connections']}")
+            click.echo(f"Grief:        {result['grief']}")
+            if dry_run:
+                click.echo("(dry run — nothing written)")
+
+        store.close()
+    else:
+        click.echo(f"Dream loop starting. Interval: {interval}s. Ctrl+C to wake.")
+        try:
+            dream_loop(store, interval=interval, batch_size=batch_size)
+        finally:
+            store.close()
+
+
+@cli.command()
+@click.option('--compare', is_flag=True, help='Run both spectrum and dream, compare results')
+@click.option('--batch-size', default=30, type=int, help='Hot edges to analyze')
+@click.option('--cluster-threshold', default=0.7, type=float, help='Cosine similarity threshold for clustering')
+@click.option('--resonance-threshold', default=0.5, type=float, help='Similarity threshold for resonance predictions')
+def spectrum(compare: bool, batch_size: int, cluster_threshold: float, resonance_threshold: float):
+    """
+    Run spectrum analysis on current hot edges.
+
+    Geometric instrument: cosine similarity, clustering, interference
+    patterns, spectral decomposition, resonance prediction.
+
+    Use --compare to run both spectrum and dream, then see where
+    the math and the LLM converge or diverge.
+
+    Examples:
+        bro-engine spectrum                # geometric analysis only
+        bro-engine spectrum --compare      # compare with dream
+    """
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [spectrum] %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
+    store = get_store()
+
+    if compare:
+        compare_dream_and_spectrum(store, batch_size=batch_size)
+    else:
+        result = run_spectrum(
+            store,
+            batch_size=batch_size,
+            cluster_threshold=cluster_threshold,
+            resonance_threshold=resonance_threshold,
+        )
+        result.print_report()
+
+    store.close()
 
 
 def main():

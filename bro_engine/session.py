@@ -62,6 +62,15 @@ def begin_session(
         edge_id = store.add_edge(edge)
         truth_edges.append(edge)
 
+        # Link session to each defining truth
+        store.add_edge(Edge(
+            source=session_id,
+            relationship="defined_by",
+            target=str(edge_id),
+            confidence=0.8,
+            via=session_id,
+        ))
+
         # Collect concepts from all parts
         concepts.extend([source, relationship, target])
 
@@ -77,6 +86,54 @@ def begin_session(
         "concepts": concepts,
         "resonant_edges": resonant,
     }
+
+
+def _write_created_during(store: GraphStore, edge_id: str, session_id: str) -> None:
+    """Write a created_during provenance edge linking an edge to its session."""
+    store.add_edge(Edge(
+        source=edge_id,
+        relationship="created_during",
+        target=session_id,
+        confidence=0.8,
+        via=session_id,
+    ))
+
+
+def begin_otter_session(
+    store: GraphStore,
+    seed_edges: list,
+    session_name: Optional[str] = None,
+) -> dict:
+    """
+    Begin an otter inference session grounded in seed edges.
+
+    The otter is a subjectivity — its inferences are colored by which
+    edges it starts from. Those seed edges ARE its opening truths.
+
+    Args:
+        store: GraphStore connection
+        seed_edges: The edges the otter is reasoning from (up to 3 used as truths)
+        session_name: Optional name
+
+    Returns:
+        Dict with session_id (same shape as begin_session)
+
+    # TODO: wire this into from_otter_edges so otter inferences carry
+    # full session provenance. Every derived edge should have created_during
+    # pointing to the otter's session, and the session should be defined_by
+    # the seed edges it reasoned from.
+    """
+    truths = [
+        (e.subject, e.predicate, e.object)
+        if hasattr(e, 'subject') else (e.source, e.relationship, e.target)
+        for e in seed_edges[:3]
+    ]
+    if len(truths) < 3:
+        # Pad with a self-referential truth if fewer than 3 seeds
+        truths += [("otter", "reasoning_from", f"{len(seed_edges)}_seed_edges")] * (3 - len(truths))
+
+    name = session_name or f"otter_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    return begin_session(store, truths, session_name=name, confidence=0.7)
 
 
 def extract_concepts(truths: list[str]) -> list[str]:
@@ -180,7 +237,16 @@ def continue_session(
         confidence=confidence,
         via=session_id,
     )
-    store.add_edge(edge)
+    edge_id = store.add_edge(edge)
+
+    # Link edge back to its session
+    store.add_edge(Edge(
+        source=str(edge_id),
+        relationship="created_during",
+        target=session_id,
+        confidence=0.8,
+        via=session_id,
+    ))
 
     # Get all edges from this session for resonance
     session_edges = store.query_edges(via=session_id, limit=50)
