@@ -78,8 +78,8 @@ Please respond with a JSON object:
 A few things:
 - Confidence 0.1–0.5. These are daydreams. Nothing here is settled.
 - Relationship names: lowercase, underscores. Use whatever feels true.
-- Empty arrays are a valid response. Don't perform insight you don't have.
-- The questions are often the most valuable part. What did the edges make you wonder?
+- It's genuinely ok if nothing comes. An empty response is interesting too — it means these edges don't have chemistry right now, and that's data.
+- The questions are often the most valuable part. What did the edges make you curious about?
 
 {hot_edges}
 
