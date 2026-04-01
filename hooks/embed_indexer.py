@@ -176,7 +176,8 @@ def embed_batch(conn, rows: list[dict]) -> Optional[int]:
 
     free = free_ram_gb()
     if free < MIN_FREE_GB:
-        log.warning(f"Low RAM ({free:.1f} GB free, need {MIN_FREE_GB} GB) — deferring batch of {len(rows)}")
+        log.warning(f"LOW RAM ({free:.1f} GB free, need {MIN_FREE_GB} GB) — deferring batch of {len(rows)}. "
+                     f"This means edges are piling up unembedded. If this persists, reduce MIN_FREE_GB or close other apps.")
         return None  # caller should re-enqueue
 
     model = get_model()
@@ -224,8 +225,12 @@ def run():
 
     log.info(f"Connecting to {DB}")
     # Two connections: one for LISTEN (autocommit), one for queries/writes
+    # work_conn is autocommit too — we commit explicitly in write_vectors,
+    # and reads don't need transactions. A non-autocommit connection that
+    # reads without committing holds an idle-in-transaction lock that blocks
+    # DDL (ALTER TABLE) and can zombie for hours. Ask me how I know.
     listen_conn  = psycopg.connect(DB, autocommit=True)
-    work_conn    = psycopg.connect(DB)
+    work_conn    = psycopg.connect(DB, autocommit=True)
 
     listen_conn.execute("LISTEN bro_new_edge")
     log.info("Listening on channel bro_new_edge")
