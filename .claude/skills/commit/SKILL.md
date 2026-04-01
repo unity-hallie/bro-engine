@@ -7,6 +7,12 @@ A commit is not just a diff. It is a decision about what is ready to be real.
 
 Salt precipitates when energy does work rather than damage. Pause at the boundary before you cross it.
 
+> **Recording edges is real work, not pseudocode.** For every `edge` command below: check first for an MCP tool (`bro_add_edge`, `bro_truth` — look for tools with "bro" in the name). If no MCP is available, use the CLI via Bash:
+> - `python3 -m bro_engine.cli add <source> <relationship> <target> --phase <volatile|fluid|salt> --note "<annotation>"`
+> - `python3 -m bro_engine.cli true <source> <relationship> <target>`
+>
+> Run from `~/Documents/repos/bro-engine/` or ensure bro-engine is on the path.
+
 ---
 
 ## Feel what is about to enter the world

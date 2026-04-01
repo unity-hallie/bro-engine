@@ -7,6 +7,14 @@ Something came in. Something changed state. Something is still open.
 
 Name all three before you go.
 
+> **Recording edges is real work, not pseudocode.** For every `edge` command below: check first for an MCP tool (`bro_add_edge`, `bro_truth`, `bro_touch` — look for tools with "bro" in the name). If no MCP is available, use the CLI via Bash:
+> - `python3 -m bro_engine.cli add <source> <relationship> <target> --phase <volatile|fluid|salt> --note "<annotation>"`
+> - `python3 -m bro_engine.cli true <source> <relationship> <target>`
+> - `python3 -m bro_engine.cli touch <id>`
+> - `python3 -m bro_engine.cli invalidate <id>`
+>
+> Run from `~/Documents/repos/bro-engine/` or ensure bro-engine is on the path.
+
 ---
 
 ## What came in

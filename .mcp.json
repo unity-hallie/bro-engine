@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bro-engine": {
+      "command": "/Users/hallie/Documents/repos/bro-engine/.venv/bin/bro-engine-mcp",
+      "args": [],
+      "env": {
+        "BRO_ENGINE_DB": "postgresql:///bro_engine"
+      }
+    }
+  }
+}
