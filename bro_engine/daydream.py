@@ -1,0 +1,283 @@
+"""
+Daydream: speculative warming of cool edges near hot ones.
+
+Dream is cooling — consolidation, diffusion, grief.
+Daydream is warming — pulling hot edges alongside cool neighbors
+and letting them play together. Not "what connects?" but
+"what COULD connect?" Imagination, not memory.
+
+Dream edges have via="dream". Daydream edges have via="daydream".
+Daydream edges start volatile — low confidence, high heat.
+They're hypotheses that want to be tested.
+"""
+
+import json
+import logging
+import time
+
+import anthropic
+
+from .graph_store import Edge, GraphStore
+
+logger = logging.getLogger(__name__)
+
+DAYDREAM_MODEL = "claude-haiku-4-5-20251001"
+
+DAYDREAM_PROMPT = """\
+You are a knowledge engine daydreaming. Not consolidating — imagining.
+
+Below are two groups of edges from a knowledge graph:
+- HOT edges: things that have been actively attended to recently
+- COOL NEIGHBORS: edges that are semantically nearby (similar vectors) \
+but haven't been attended to. They're dormant. Forgotten, maybe.
+
+Your job: imagine what happens when they meet. The hot edge warms \
+the cool one. The cool one grounds the hot one. What scenarios, \
+connections, or questions emerge from their proximity?
+
+This is speculation, not fact-finding. Be playful. Be surprising. \
+Follow the resonance, not the logic.
+
+Respond with a JSON object:
+
+{
+  "sparks": [
+    {
+      "source": "...",
+      "relationship": "...",
+      "target": "...",
+      "confidence": 0.1-0.5,
+      "reason": "what made you imagine this"
+    }
+  ],
+  "questions": [
+    "questions the juxtaposition raises — things worth investigating"
+  ]
+}
+
+Rules:
+- Confidence must be 0.1-0.5. These are daydreams, not conclusions.
+- Relationship names: lowercase with underscores.
+- If nothing sparks, return empty arrays. Don't manufacture.
+- The questions matter as much as the sparks. Maybe more.
+
+HOT EDGES:
+{hot_edges}
+
+COOL NEIGHBORS:
+{cool_edges}
+"""
+
+
+def fetch_hot_with_cool_neighbors(
+    store: GraphStore,
+    hot_count: int = 10,
+    neighbors_per_hot: int = 3,
+) -> tuple[list[Edge], list[Edge]]:
+    """
+    Pull hot edges, then for each find cool neighbors by vector similarity.
+
+    Returns (hot_edges, cool_neighbors) with no overlap.
+    """
+    from .graph_store.graph_store import _row_to_edge
+
+    with store.connection() as conn:
+        with conn.cursor() as cur:
+            # Get hot edges
+            cur.execute("""
+                SELECT * FROM edges
+                WHERE invalidated_at IS NULL
+                  AND hot > 0.01
+                  AND vector IS NOT NULL
+                ORDER BY hot DESC
+                LIMIT %(limit)s
+            """, {"limit": hot_count})
+            hot_edges = [_row_to_edge(row) for row in cur.fetchall()]
+
+            if not hot_edges:
+                return [], []
+
+            # For each hot edge, find cool neighbors by vector similarity
+            hot_ids = {str(e.id) for e in hot_edges}
+            cool_edges = []
+            cool_ids = set()
+
+            for hot_edge in hot_edges:
+                if hot_edge.vector is None:
+                    continue
+                cur.execute("""
+                    SELECT *, 1 - (vector <=> %(vec)s::vector) AS similarity
+                    FROM edges
+                    WHERE invalidated_at IS NULL
+                      AND vector IS NOT NULL
+                      AND hot < 0.1
+                      AND id != %(exclude)s
+                    ORDER BY vector <=> %(vec)s::vector
+                    LIMIT %(limit)s
+                """, {
+                    "vec": hot_edge.vector,
+                    "exclude": str(hot_edge.id),
+                    "limit": neighbors_per_hot,
+                })
+                for row in cur.fetchall():
+                    edge = _row_to_edge(row)
+                    eid = str(edge.id)
+                    if eid not in hot_ids and eid not in cool_ids:
+                        cool_edges.append(edge)
+                        cool_ids.add(eid)
+
+    return hot_edges, cool_edges
+
+
+def format_edges(edges: list[Edge], label: str) -> str:
+    lines = [f"--- {label} ---"]
+    for e in edges:
+        lines.append(
+            f"  ({e.source}) --[{e.relationship}]--> ({e.target})  "
+            f"conf={e.confidence:.2f}  hot={e.hot:.3f}"
+        )
+    return "\n".join(lines)
+
+
+def parse_daydream_response(response_text: str) -> dict:
+    text = response_text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse daydream response as JSON")
+        return {"sparks": [], "questions": []}
+
+    sparks = result.get("sparks", [])
+    questions = result.get("questions", [])
+
+    # Cap confidence — daydreams are volatile
+    for spark in sparks:
+        conf = spark.get("confidence", 0.3)
+        spark["confidence"] = max(0.1, min(conf, 0.5))
+
+    return {"sparks": sparks, "questions": questions}
+
+
+def daydream_cycle(
+    store: GraphStore,
+    hot_count: int = 10,
+    neighbors_per_hot: int = 3,
+    dry_run: bool = False,
+) -> dict:
+    """
+    One daydream cycle.
+
+    1. Pull hot edges with cool neighbors
+    2. Send to LLM — imagine what happens when they meet
+    3. Write sparks as volatile edges (via="daydream")
+    4. Log questions for future investigation
+    """
+    hot_edges, cool_edges = fetch_hot_with_cool_neighbors(
+        store, hot_count=hot_count, neighbors_per_hot=neighbors_per_hot
+    )
+
+    if not hot_edges:
+        logger.info("Nothing hot to daydream about.")
+        return {"hot": 0, "cool": 0, "sparks": 0, "questions": [], "skipped": True}
+
+    if not cool_edges:
+        logger.info("Hot edges but no cool neighbors. The graph is uniformly warm.")
+        return {"hot": len(hot_edges), "cool": 0, "sparks": 0, "questions": [], "skipped": True}
+
+    logger.info(f"Daydreaming: {len(hot_edges)} hot + {len(cool_edges)} cool neighbors")
+
+    prompt = DAYDREAM_PROMPT.format(
+        hot_edges=format_edges(hot_edges, "HOT"),
+        cool_edges=format_edges(cool_edges, "COOL NEIGHBORS"),
+    )
+
+    client = anthropic.Anthropic()
+    message = client.messages.create(
+        model=DAYDREAM_MODEL,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    response_text = message.content[0].text
+    logger.debug(f"Daydream response: {response_text}")
+
+    result = parse_daydream_response(response_text)
+
+    if dry_run:
+        logger.info(f"Dry run: {len(result['sparks'])} sparks, {len(result['questions'])} questions")
+        return {
+            "hot": len(hot_edges),
+            "cool": len(cool_edges),
+            "sparks": len(result["sparks"]),
+            "questions": result["questions"],
+            "dry_run": True,
+            "raw": result,
+        }
+
+    # Write sparks as volatile edges
+    written = 0
+    for spark in result["sparks"]:
+        try:
+            edge = Edge(
+                source=spark["source"],
+                relationship=spark["relationship"],
+                target=spark["target"],
+                confidence=spark["confidence"],
+                via="daydream",
+                kind="daydream_edge",
+                properties={"daydream_reason": spark.get("reason", "")},
+            )
+            store.add_edge(edge)
+            written += 1
+            logger.info(f"  sparked: {edge}")
+        except (KeyError, ValueError) as e:
+            logger.warning(f"  skipped malformed spark: {e}")
+
+    # Log questions
+    for q in result["questions"]:
+        logger.info(f"  question: {q}")
+
+    return {
+        "hot": len(hot_edges),
+        "cool": len(cool_edges),
+        "sparks": written,
+        "questions": result["questions"],
+    }
+
+
+def daydream_loop(
+    store: GraphStore,
+    interval: int = 900,
+    hot_count: int = 10,
+    neighbors_per_hot: int = 3,
+) -> None:
+    """
+    Daydream on a heartbeat. Slower than dreaming — every 15 min default.
+    Daydreaming is leisurely.
+    """
+    logger.info(f"Daydream loop starting. Interval: {interval}s")
+
+    try:
+        while True:
+            try:
+                result = daydream_cycle(
+                    store, hot_count=hot_count,
+                    neighbors_per_hot=neighbors_per_hot,
+                )
+                logger.info(
+                    f"Cycle: {result['hot']} hot + {result['cool']} cool → "
+                    f"{result['sparks']} sparks, {len(result['questions'])} questions"
+                )
+            except anthropic.APIError as e:
+                logger.error(f"API error: {e}")
+            except Exception as e:
+                logger.exception(f"Error: {e}")
+
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        logger.info("Daydream interrupted. Back to waking.")

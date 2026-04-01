@@ -17,6 +17,7 @@ import click
 from .graph_store import Edge, GraphStore
 from .session import begin_session, continue_session, end_session
 from .dream import dream_cycle, dream_loop
+from .daydream import daydream_cycle, daydream_loop
 from .spectrum import run_spectrum, compare_dream_and_spectrum
 
 
@@ -842,6 +843,61 @@ def dream(once: bool, interval: int, batch_size: int, dry_run: bool):
         click.echo(f"Dream loop starting. Interval: {interval}s. Ctrl+C to wake.")
         try:
             dream_loop(store, interval=interval, batch_size=batch_size)
+        finally:
+            store.close()
+
+
+@cli.command()
+@click.option('--once', is_flag=True, help='Run a single daydream cycle')
+@click.option('--interval', default=900, type=int, help='Seconds between cycles (default 900)')
+@click.option('--hot-count', default=10, type=int, help='Hot edges to pull')
+@click.option('--neighbors', default=3, type=int, help='Cool neighbors per hot edge')
+@click.option('--dry-run', is_flag=True, help='Show what would happen without writing')
+def daydream(once: bool, interval: int, hot_count: int, neighbors: int, dry_run: bool):
+    """
+    Daydream: speculative warming. Pull hot edges with cool neighbors,
+    imagine what happens when they meet.
+
+    Unlike dreaming (consolidation, cooling), daydreaming is warming —
+    generating hypotheses, asking questions, playing.
+
+    Examples:
+        bro-engine daydream --once       # single cycle
+        bro-engine daydream --dry-run    # see what it would imagine
+        bro-engine daydream              # loop every 15 min
+    """
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [daydream] %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
+    store = get_store()
+
+    if once or dry_run:
+        result = daydream_cycle(store, hot_count=hot_count,
+                                neighbors_per_hot=neighbors, dry_run=dry_run)
+
+        if result.get("skipped"):
+            click.echo("Nothing to daydream about.")
+        else:
+            click.echo(f"Hot edges:     {result['hot']}")
+            click.echo(f"Cool neighbors: {result['cool']}")
+            click.echo(f"Sparks:        {result['sparks']}")
+            if result['questions']:
+                click.echo("Questions:")
+                for q in result['questions']:
+                    click.echo(f"  ? {q}")
+            if dry_run:
+                click.echo("(dry run — nothing written)")
+
+        store.close()
+    else:
+        click.echo(f"Daydream loop starting. Interval: {interval}s. Ctrl+C to wake.")
+        try:
+            daydream_loop(store, interval=interval, hot_count=hot_count,
+                         neighbors_per_hot=neighbors)
         finally:
             store.close()
 
