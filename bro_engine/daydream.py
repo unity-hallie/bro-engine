@@ -15,13 +15,41 @@ import json
 import logging
 import time
 
-import anthropic
-
 from .graph_store import Edge, GraphStore
 
 logger = logging.getLogger(__name__)
 
-DAYDREAM_MODEL = "claude-haiku-4-5-20251001"
+# Try Anthropic first, fall back to OpenAI 4o-mini
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+OPENAI_MODEL = "gpt-4o-mini"
+
+
+def _get_llm_client():
+    """Return (client_type, client) — tries Anthropic first, then OpenAI."""
+    import os
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        import anthropic
+        return "anthropic", anthropic.Anthropic()
+
+    # Try keychain for OpenAI
+    try:
+        import subprocess
+        key = subprocess.run(
+            ["security", "find-generic-password", "-s", "BRO_OPENAI_API_KEY", "-w"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        if key:
+            from openai import OpenAI
+            return "openai", OpenAI(api_key=key)
+    except Exception:
+        pass
+
+    if os.environ.get("OPENAI_API_KEY") or os.environ.get("BRO_OPENAI_API_KEY"):
+        from openai import OpenAI
+        key = os.environ.get("BRO_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        return "openai", OpenAI(api_key=key)
+
+    raise RuntimeError("No LLM API key found. Set ANTHROPIC_API_KEY or add BRO_OPENAI_API_KEY to keychain.")
 
 DAYDREAM_PROMPT = """\
 You are a knowledge engine daydreaming. Not consolidating — imagining.
@@ -40,20 +68,7 @@ Follow the resonance, not the logic.
 
 Respond with a JSON object:
 
-{
-  "sparks": [
-    {
-      "source": "...",
-      "relationship": "...",
-      "target": "...",
-      "confidence": 0.1-0.5,
-      "reason": "what made you imagine this"
-    }
-  ],
-  "questions": [
-    "questions the juxtaposition raises — things worth investigating"
-  ]
-}
+{{"sparks": [{{"source": "...", "relationship": "...", "target": "...", "confidence": 0.1-0.5, "reason": "what made you imagine this"}}], "questions": ["questions the juxtaposition raises — things worth investigating"]}}
 
 Rules:
 - Confidence must be 0.1-0.5. These are daydreams, not conclusions.
@@ -105,6 +120,7 @@ def fetch_hot_with_cool_neighbors(
             for hot_edge in hot_edges:
                 if hot_edge.vector is None:
                     continue
+                vec_list = hot_edge.vector.tolist() if hasattr(hot_edge.vector, 'tolist') else list(hot_edge.vector)
                 cur.execute("""
                     SELECT *, 1 - (vector <=> %(vec)s::vector) AS similarity
                     FROM edges
@@ -115,7 +131,7 @@ def fetch_hot_with_cool_neighbors(
                     ORDER BY vector <=> %(vec)s::vector
                     LIMIT %(limit)s
                 """, {
-                    "vec": hot_edge.vector,
+                    "vec": vec_list,
                     "exclude": str(hot_edge.id),
                     "limit": neighbors_per_hot,
                 })
@@ -196,14 +212,24 @@ def daydream_cycle(
         cool_edges=format_edges(cool_edges, "COOL NEIGHBORS"),
     )
 
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model=DAYDREAM_MODEL,
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    client_type, client = _get_llm_client()
 
-    response_text = message.content[0].text
+    if client_type == "anthropic":
+        message = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = message.content[0].text
+    else:
+        message = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = message.choices[0].message.content
+
+    logger.info(f"LLM backend: {client_type}")
     logger.debug(f"Daydream response: {response_text}")
 
     result = parse_daydream_response(response_text)
