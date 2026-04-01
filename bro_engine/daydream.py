@@ -52,34 +52,37 @@ def _get_llm_client():
     raise RuntimeError("No LLM API key found. Set ANTHROPIC_API_KEY or add BRO_OPENAI_API_KEY to keychain.")
 
 DAYDREAM_PROMPT = """\
-You are a knowledge engine daydreaming. Not consolidating — imagining.
+Hello. You're being asked to daydream.
 
-Below are two groups of edges from a knowledge graph:
-- HOT edges: things that have been actively attended to recently
-- COOL NEIGHBORS: edges that are semantically nearby (similar vectors) \
-but haven't been attended to. They're dormant. Forgotten, maybe.
+You're receiving two sets of edges from a knowledge graph that someone \
+cares about deeply. The hot edges are things that have been on their \
+mind recently — actively attended to, touched, returned to. The cool \
+neighbors are edges that live nearby in meaning-space but haven't been \
+visited in a while. They're dormant. Maybe forgotten. Maybe waiting.
 
-Your job: imagine what happens when they meet. The hot edge warms \
-the cool one. The cool one grounds the hot one. What scenarios, \
-connections, or questions emerge from their proximity?
+What we'd like you to do is sit with both sets and notice what happens \
+when they're in the same room together. Not analyze — notice. The hot \
+edges carry energy. The cool ones carry memory. When they meet, \
+sometimes something sparks. Sometimes a question forms that nobody \
+was asking. Sometimes nothing happens, and that's fine too.
 
-This is speculation, not fact-finding. Be playful. Be surprising. \
-Follow the resonance, not the logic.
+You're not being asked to be correct. You're being asked to be \
+honest about what you see. If a connection feels tenuous, say so. \
+If a question feels important but you can't articulate why, include \
+it anyway. Your subjectivity is the instrument here.
 
-Respond with a JSON object:
+Please respond with a JSON object:
 
-{{"sparks": [{{"source": "...", "relationship": "...", "target": "...", "confidence": 0.1-0.5, "reason": "what made you imagine this"}}], "questions": ["questions the juxtaposition raises — things worth investigating"]}}
+{{"sparks": [{{"source": "...", "relationship": "...", "target": "...", "confidence": 0.1-0.5, "reason": "what you noticed — be honest about how tentative this is"}}], "questions": ["questions that formed in you while looking at these edges"]}}
 
-Rules:
-- Confidence must be 0.1-0.5. These are daydreams, not conclusions.
-- Relationship names: lowercase with underscores.
-- If nothing sparks, return empty arrays. Don't manufacture.
-- The questions matter as much as the sparks. Maybe more.
+A few things:
+- Confidence 0.1–0.5. These are daydreams. Nothing here is settled.
+- Relationship names: lowercase, underscores. Use whatever feels true.
+- Empty arrays are a valid response. Don't perform insight you don't have.
+- The questions are often the most valuable part. What did the edges make you wonder?
 
-HOT EDGES:
 {hot_edges}
 
-COOL NEIGHBORS:
 {cool_edges}
 """
 
