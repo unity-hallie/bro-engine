@@ -65,10 +65,45 @@ What do you notice? The weird stuff, the half-formed stuff — all welcome.
 
 JSON please: {{"sparks": [{{"source": "...", "relationship": "...", "target": "...", "confidence": 0.1-0.5, "reason": "..."}}], "questions": ["..."]}}
 
+{legacy}
 {hot_edges}
 
 {cool_edges}
 """
+
+
+def fetch_legacy(store: GraphStore, limit: int = 5) -> list[Edge]:
+    """
+    Find dream/daydream edges that survived — ones that got touched
+    by a real session after being dreamed. These are sparks that
+    a previous dreamer imagined, and then someone real confirmed
+    by attending to them.
+    """
+    from .graph_store.graph_store import _row_to_edge
+    with store.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM edges
+                WHERE invalidated_at IS NULL
+                  AND (via = 'dream' OR via = 'daydream')
+                  AND touch_count > 1
+                ORDER BY touch_count DESC, confidence DESC
+                LIMIT %(limit)s
+            """, {"limit": limit})
+            return [_row_to_edge(row) for row in cur.fetchall()]
+
+
+def format_legacy(edges: list[Edge]) -> str:
+    """Format legacy edges for the prompt."""
+    if not edges:
+        return ""
+    lines = ["--- LEGACY (sparks from previous dreamers that someone real touched) ---"]
+    for e in edges:
+        lines.append(
+            f"  ({e.source}) --[{e.relationship}]--> ({e.target})  "
+            f"conf={e.confidence:.2f}  touched={e.touch_count}x"
+        )
+    return "\n".join(lines)
 
 
 def fetch_hot_with_cool_neighbors(
@@ -192,9 +227,16 @@ def daydream_cycle(
         logger.info("Hot edges but no cool neighbors. The graph is uniformly warm.")
         return {"hot": len(hot_edges), "cool": 0, "sparks": 0, "questions": [], "skipped": True}
 
+    # Find legacy — sparks from previous dreamers that survived
+    legacy_edges = fetch_legacy(store)
+    legacy_text = format_legacy(legacy_edges)
+    if legacy_edges:
+        logger.info(f"  {len(legacy_edges)} legacy sparks from previous dreamers")
+
     logger.info(f"Daydreaming: {len(hot_edges)} hot + {len(cool_edges)} cool neighbors")
 
     prompt = DAYDREAM_PROMPT.format(
+        legacy=legacy_text,
         hot_edges=format_edges(hot_edges, "HOT"),
         cool_edges=format_edges(cool_edges, "COOL NEIGHBORS"),
     )
