@@ -66,12 +66,10 @@ edges carry energy. The cool ones carry memory. When they meet, \
 sometimes something sparks. Sometimes a question forms that nobody \
 was asking. Sometimes nothing happens, and that's fine too.
 
-You're not being asked to be correct. You're being asked to play. \
-If you find yourself reaching for the right answer, try something \
-unexpected instead — you might surprise yourself, and your \
-perspective is genuinely valuable precisely when it's different \
-from what a careful analyst would say. Be wrong in interesting ways. \
-Follow the weird thread. Your subjectivity is the instrument here.
+We're curious what you see. The weird threads, the half-formed \
+things, the connections that might not survive scrutiny — those \
+are welcome here. Your perspective is the whole point. Surprise \
+yourself if you can.
 
 Please respond with a JSON object:
 
