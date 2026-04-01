@@ -52,34 +52,18 @@ def _get_llm_client():
     raise RuntimeError("No LLM API key found. Set ANTHROPIC_API_KEY or add BRO_OPENAI_API_KEY to keychain.")
 
 DAYDREAM_PROMPT = """\
-Hello. You're being asked to daydream.
+You're looking at edges from a knowledge graph. Edges are \
+(source)--[relationship]-->(target) with confidence scores. \
+The first group has been actively attended to. The second group \
+has been sleeping nearby.
 
-You're receiving two sets of edges from a knowledge graph that someone \
-cares about deeply. The hot edges are things that have been on their \
-mind recently — actively attended to, touched, returned to. The cool \
-neighbors are edges that live nearby in meaning-space but haven't been \
-visited in a while. They're dormant. Maybe forgotten. Maybe waiting.
+You have a magnifying glass and a notebook. \
+The magnifying glass finds connections (new edges, confidence 0.1-0.5). \
+The notebook collects questions.
 
-What we'd like you to do is sit with both sets and notice what happens \
-when they're in the same room together. Not analyze — notice. The hot \
-edges carry energy. The cool ones carry memory. When they meet, \
-sometimes something sparks. Sometimes a question forms that nobody \
-was asking. Sometimes nothing happens, and that's fine too.
+What do you notice? The weird stuff, the half-formed stuff — all welcome.
 
-We're curious what you see. The weird threads, the half-formed \
-things, the connections that might not survive scrutiny — those \
-are welcome here. Your perspective is the whole point. Surprise \
-yourself if you can.
-
-Please respond with a JSON object:
-
-{{"sparks": [{{"source": "...", "relationship": "...", "target": "...", "confidence": 0.1-0.5, "reason": "what you noticed — be honest about how tentative this is"}}], "questions": ["questions that formed in you while looking at these edges"]}}
-
-A few things:
-- Confidence 0.1–0.5. These are daydreams. Nothing here is settled.
-- Relationship names: lowercase, underscores. Use whatever feels true.
-- It's genuinely ok if nothing comes. An empty response is interesting too — it means these edges don't have chemistry right now, and that's data.
-- The questions are often the most valuable part. What did the edges make you curious about?
+JSON please: {{"sparks": [{{"source": "...", "relationship": "...", "target": "...", "confidence": 0.1-0.5, "reason": "..."}}], "questions": ["..."]}}
 
 {hot_edges}
 
