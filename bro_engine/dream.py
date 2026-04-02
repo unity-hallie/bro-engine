@@ -14,13 +14,13 @@ import logging
 import time
 from datetime import datetime
 
-import anthropic
-
 from .graph_store import Edge, GraphStore
+from .daydream import _get_llm_client
 
 logger = logging.getLogger(__name__)
 
-DREAM_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+OPENAI_MODEL = "gpt-4o-mini"
 
 DREAM_PROMPT = """\
 You are a contemplative knowledge engine dreaming over its recent hot edges.
@@ -148,14 +148,24 @@ def dream_cycle(
     # 2. Format and send to LLM
     prompt = DREAM_PROMPT + format_edges_for_prompt(hot_edges)
 
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model=DREAM_MODEL,
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    client_type, client = _get_llm_client()
 
-    response_text = message.content[0].text
+    if client_type == "anthropic":
+        message = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = message.content[0].text
+    else:
+        message = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = message.choices[0].message.content
+
+    logger.info(f"LLM backend: {client_type}")
     logger.debug(f"Dream response: {response_text}")
 
     # 3. Parse response
